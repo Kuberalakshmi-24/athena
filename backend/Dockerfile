@@ -26,5 +26,5 @@ EXPOSE 5000
 
 # For development: python src/app.py
 # For production with gunicorn: gunicorn src.app:app --bind 0.0.0.0:$PORT
-# Increased timeout to 300s to allow RAG service initialization on first request
-CMD ["sh", "-c", "gunicorn src.app:app --bind 0.0.0.0:${PORT:-5000} --workers 1 --timeout 300 --keep-alive 70"]
+# Optimized settings: 1 worker, small timeout, lazy app loading
+CMD ["sh", "-c", "gunicorn src.app:app --bind 0.0.0.0:${PORT:-5000} --workers 1 --timeout 60 --keep-alive 5 --lazy-apps"]

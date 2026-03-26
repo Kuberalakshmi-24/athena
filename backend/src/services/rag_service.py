@@ -61,6 +61,7 @@ class LocalHashEmbeddings:
 
 class RAGService:
     def __init__(self):
+        """Initialize with minimal overhead. Heavy components load lazily."""
         self.api_key = os.getenv("GROQ_API_KEY")
         if not self.api_key:
             raise ValueError("GROQ_API_KEY not found in environment variables")
@@ -69,17 +70,44 @@ class RAGService:
         self.data_dir = self.base_dir / "data"
         self.chroma_dir = self.base_dir / "chroma_db"
         
-        self.llm = ChatGroq(
-            groq_api_key=self.api_key,
-            model_name="llama-3.1-8b-instant",
-            temperature=0.2,
-            max_tokens=700,
-            streaming=True
-        )
+        # Lazy-loaded components (initialized on first use)
+        self.llm = None
+        self.embeddings = None
+        self.reranker = None
+        self.vector_db = None
+        
+        # State
+        self.conversation_chains = {}
+        self.learning_level = "Beginner"
+        self.score = 0
+        self.total_quizzes = 0
+        self.max_context_chars = 2200
+        self._initialized = False
 
+    def _ensure_initialized(self):
+        """Lazy initialization of heavy components on first use."""
+        if self._initialized:
+            return
+        
+        self._initialized = True
+        print("[INFO] Initializing RAGService heavy components...")
+        
+        # Initialize LLM
         try:
-            # Set offline mode so sentence_transformers only checks the local cache and
-            # fails immediately (no network retries) if the model isn't downloaded yet.
+            self.llm = ChatGroq(
+                groq_api_key=self.api_key,
+                model_name="llama-3.1-8b-instant",
+                temperature=0.2,
+                max_tokens=700,
+                streaming=True
+            )
+            print("[INFO] ChatGroq LLM initialized")
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize ChatGroq: {e}")
+            raise
+        
+        # Initialize embeddings
+        try:
             os.environ.setdefault("HF_HUB_OFFLINE", "1")
             if HuggingFaceEmbeddings is None:
                 raise ImportError("langchain_huggingface is not installed")
@@ -88,25 +116,29 @@ class RAGService:
         except Exception as e:
             print(f"[WARN] HuggingFace embeddings unavailable ({e}). Falling back to LocalHashEmbeddings.")
             self.embeddings = LocalHashEmbeddings(dim=384)
-        self.vector_db = self._load_or_create_vector_db()
-        self.conversation_chains = {}
-        self.learning_level = "Beginner"  # Default level
-        self.score = 0
-        self.total_quizzes = 0
-        self.max_context_chars = 2200
-
-        # Keep reranker optional so startup remains resilient if model download fails.
+        
+        # Initialize vector DB
+        try:
+            self.vector_db = self._load_or_create_vector_db()
+            print("[INFO] Vector database initialized")
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize vector DB: {e}")
+            raise
+        
+        # Initialize reranker
         try:
             self.reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+            print("[INFO] CrossEncoder reranker loaded")
         except Exception as e:
             self.reranker = None
             print(f"[WARN] Cross-encoder reranker unavailable: {e}")
         
-        # Auto-ingest existing data on startup if no vectors exist
+        # Auto-ingest existing data if needed
         if self._vector_db_is_empty():
+            print("[INFO] Vector store is empty, auto-ingesting subjects...")
             self.auto_ingest_all_subjects()
         else:
-            print("Vector store already populated. Skipping startup ingestion.")
+            print("[INFO] Vector store already populated. Skipping startup ingestion.")
 
     def _curriculum_graph_path(self, subject):
         safe_subject = (subject or "General").strip() or "General"

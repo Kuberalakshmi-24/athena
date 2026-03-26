@@ -69,22 +69,6 @@ def get_rag_service():
     return _rag_service_instance
 
 
-# For backwards compatibility in case code accesses rag_service directly
-class _LazyRAGServiceProxy:
-    """Proxy that lazily initializes RAGService on first access."""
-    
-    def __getattr__(self, name):
-        if name.startswith('_'):
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-        return getattr(get_rag_service(), name)
-    
-    def __call__(self, *args, **kwargs):
-        return get_rag_service()(*args, **kwargs)
-
-
-rag_service = _LazyRAGServiceProxy()
-
-
 def _upsert_learning_progress(user_id, subject, concept, status=None, mastery_delta=0.0):
     if not concept:
         return
@@ -199,6 +183,10 @@ def handle_query():
         return jsonify({'error': 'Query is required'}), 400
     
     try:
+        # Get and initialize RAG service
+        rag = get_rag_service()
+        rag._ensure_initialized()
+        
         db.session.add(ChatMessage(
             user_id=user.id,
             role='user',
@@ -212,7 +200,7 @@ def handle_query():
         proficiency = user.proficiency_score or 0.0
 
         # Pass user context to rag service with subject for relevance checking
-        response, topic = rag_service.get_response(
+        response, topic = rag.get_response(
             user_query, 
             user.learning_level, 
             user_id,
@@ -260,6 +248,10 @@ def handle_query_stream():
 
     def generate():
         try:
+            # Get and initialize RAG service
+            rag = get_rag_service()
+            rag._ensure_initialized()
+            
             db.session.add(ChatMessage(
                 user_id=user.id,
                 role='user',
@@ -275,7 +267,7 @@ def handle_query_stream():
             full_ai_text = ""
             final_topic = "General"
 
-            for event in rag_service.stream_response(
+            for event in rag.stream_response(
                 user_query,
                 user.learning_level,
                 user_id,
@@ -341,21 +333,25 @@ def upload_document():
     subject = request.form.get('subject') or 'General'
 
     # Ensure subject directory exists so uploads also contribute to subject curriculum map.
-    data_dir = os.path.join(rag_service.data_dir, subject)
+    rag = get_rag_service()
+    rag._ensure_initialized()
+    data_dir = os.path.join(rag.data_dir, subject)
     os.makedirs(data_dir, exist_ok=True)
 
     file_path = os.path.join(data_dir, file.filename)
     file.save(file_path)
     
     try:
-        msg = rag_service.load_document(file_path, subject=subject)
+        msg = rag.load_document(file_path, subject=subject)
         return jsonify({'message': msg}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @api.route('/subjects', methods=['GET'])
 def list_subjects():
-    subjects = rag_service.list_subjects()
+    rag = get_rag_service()
+    rag._ensure_initialized()
+    subjects = rag.list_subjects()
     return jsonify({'subjects': subjects}), 200
 
 @api.route('/load_subject', methods=['POST'])
@@ -366,7 +362,9 @@ def select_subject():
         return jsonify({'error': 'Subject name required'}), 400
     
     try:
-        msg = rag_service.load_subject(subject_name)
+        rag = get_rag_service()
+        rag._ensure_initialized()
+        msg = rag.load_subject(subject_name)
         return jsonify({'message': msg}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -380,6 +378,9 @@ def update_level():
     
     if not results:
         return jsonify({'error': 'Quiz results required'}), 400
+    
+    rag = get_rag_service()
+    rag._ensure_initialized()
         
     user = User.query.get(user_id)
     subject = results.get('subject')
@@ -413,7 +414,9 @@ def update_level():
 
     # Update global level
     current_proficiency = user.proficiency_score or 0.0
-    new_level, new_proficiency = rag_service.update_learning_level(results, current_proficiency)
+    rag = get_rag_service()
+    rag._ensure_initialized()
+    new_level, new_proficiency = rag.update_learning_level(results, current_proficiency)
     
     user.learning_level = new_level
     user.proficiency_score = new_proficiency
@@ -498,12 +501,18 @@ def get_learning_path():
         for p in progress_rows
     }
 
-    path = rag_service.generate_learning_path(
+    rag = get_rag_service()
+    rag._ensure_initialized()
+    
+    path = rag.generate_learning_path(
         subject=subject,
         level=user.learning_level,
         weak_topics=weak_topics,
         progress_map=progress_map,
     )
+    
+    rag = get_rag_service()
+    rag._ensure_initialized()
 
     return jsonify(path), 200
 
@@ -619,7 +628,9 @@ def generate_curriculum():
     user_id = int(get_jwt_identity())
 
     try:
-        curriculum_data = rag_service.generate_curriculum(subject)
+        rag = get_rag_service()
+        rag._ensure_initialized()
+        curriculum_data = rag.generate_curriculum(subject)
 
         # Replace existing curriculum for this subject
         existing = Curriculum.query.filter_by(subject=subject).first()
@@ -688,15 +699,19 @@ def teach_topic_stream():
 
     def generate():
         try:
+            # Get and initialize RAG service
+            rag = get_rag_service()
+            rag._ensure_initialized()
+            
             # Fetch relevant context from vector DB
             context_text = ""
             try:
-                docs = rag_service.vector_db.similarity_search(topic_name, k=4)
+                docs = rag.vector_db.similarity_search(topic_name, k=4)
                 context_text = "\n".join(d.page_content[:300] for d in docs)
             except Exception:
                 pass
 
-            lesson = rag_service.teach_topic(
+            lesson = rag.teach_topic(
                 topic_name=topic_name,
                 difficulty=difficulty,
                 subject=subject,
@@ -812,14 +827,18 @@ def topic_quiz_stream():
 
     def generate():
         try:
+            # Get and initialize RAG service
+            rag = get_rag_service()
+            rag._ensure_initialized()
+            
             context_text = ""
             try:
-                docs = rag_service.vector_db.similarity_search(topic_name, k=3)
+                docs = rag.vector_db.similarity_search(topic_name, k=3)
                 context_text = "\n".join(d.page_content[:300] for d in docs)
             except Exception:
                 pass
 
-            quiz_text = rag_service.generate_topic_quiz(
+            quiz_text = rag.generate_topic_quiz(
                 topic_name=topic_name,
                 difficulty=difficulty,
                 subject=subject,
@@ -870,6 +889,10 @@ def module_quiz_stream():
 
     def generate():
         try:
+            # Get and initialize RAG service
+            rag = get_rag_service()
+            rag._ensure_initialized()
+            
             # Gather topic names for this module
             topic_names = []
             if module_id:
@@ -880,12 +903,12 @@ def module_quiz_stream():
             context_text = ""
             try:
                 query = module_name + " " + " ".join(topic_names[:3])
-                docs = rag_service.vector_db.similarity_search(query, k=4)
+                docs = rag.vector_db.similarity_search(query, k=4)
                 context_text = "\n".join(d.page_content[:300] for d in docs)
             except Exception:
                 pass
 
-            quiz_text = rag_service.generate_module_quiz(
+            quiz_text = rag.generate_module_quiz(
                 module_name=module_name,
                 topic_names=topic_names,
                 subject=subject,
@@ -931,6 +954,10 @@ def final_test_stream():
 
     def generate():
         try:
+            # Get and initialize RAG service
+            rag = get_rag_service()
+            rag._ensure_initialized()
+            
             module_names = []
             if curriculum_id:
                 cur = Curriculum.query.get(int(curriculum_id))
@@ -939,12 +966,12 @@ def final_test_stream():
 
             context_text = ""
             try:
-                docs = rag_service.vector_db.similarity_search(subject, k=5)
+                docs = rag.vector_db.similarity_search(subject, k=5)
                 context_text = "\n".join(d.page_content[:300] for d in docs)
             except Exception:
                 pass
 
-            test_text = rag_service.generate_final_test(
+            test_text = rag.generate_final_test(
                 subject=subject,
                 module_names=module_names,
                 level=user.learning_level,

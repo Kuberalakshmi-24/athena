@@ -82,22 +82,6 @@ with app.app_context():
 
 app.register_blueprint(api, url_prefix='/api')
 
-# Pre-initialize RAG service after app startup to avoid timeout on first request
-@app.after_request
-def postprocess_request(response):
-    """Pre-warm RAG service in background after first request completes."""
-    if not hasattr(app, '_rag_service_initialized'):
-        try:
-            # Import here to avoid circular imports
-            from .api.routes import get_rag_service
-            get_rag_service()  # Force initialization
-            app._rag_service_initialized = True
-            print("[INFO] RAG service pre-initialized successfully")
-        except Exception as e:
-            print(f"[WARN] RAG service pre-initialization failed: {e}")
-            app._rag_service_initialized = False
-    return response
-
 @app.before_request
 def handle_options_preflight():
     if request.method == 'OPTIONS':
