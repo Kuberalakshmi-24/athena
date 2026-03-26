@@ -14,6 +14,7 @@ from ..models import (
     Curriculum, CurriculumModule, CurriculumTopic, TopicProgress
 )
 from datetime import datetime
+from pathlib import Path
 import os
 import json
 
@@ -30,6 +31,7 @@ class _UnavailableRAGService:
     def __init__(self, reason):
         self.reason = str(reason)
         self.learning_level = 'Beginner'
+        self.data_dir = Path(__file__).resolve().parents[2] / "data"
 
         class _Collection:
             @staticmethod
@@ -44,6 +46,18 @@ class _UnavailableRAGService:
                 return []
 
         self.vector_db = _VectorDB()
+
+    def _ensure_initialized(self):
+        """Fallback: raise error with helpful message."""
+        raise RuntimeError(f'RAG service unavailable: {self.reason}')
+    
+    def list_subjects(self):
+        """Fallback: return empty list instead of crashing."""
+        return []
+    
+    def load_subject(self, subject):
+        """Fallback: raise error."""
+        raise RuntimeError(f'RAG service unavailable: {self.reason}')
 
     def __getattr__(self, _name):
         raise RuntimeError(f'RAG service unavailable: {self.reason}')
@@ -349,10 +363,14 @@ def upload_document():
 
 @api.route('/subjects', methods=['GET'])
 def list_subjects():
-    rag = get_rag_service()
-    rag._ensure_initialized()
-    subjects = rag.list_subjects()
-    return jsonify({'subjects': subjects}), 200
+    try:
+        rag = get_rag_service()
+        rag._ensure_initialized()
+        subjects = rag.list_subjects()
+        return jsonify({'subjects': subjects}), 200
+    except Exception as e:
+        print(f"[ERROR] /subjects endpoint failed: {e}")
+        return jsonify({'error': str(e), 'subjects': []}), 500
 
 @api.route('/load_subject', methods=['POST'])
 def select_subject():
