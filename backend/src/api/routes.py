@@ -573,15 +573,10 @@ def clear_chat():
 
 @api.route('/health', methods=['GET'])
 def health_check():
-    try:
-        vector_count = rag_service.vector_db._collection.count()
-    except Exception:
-        vector_count = 0
+    """Simple health check that doesn't require RAG service initialization."""
     return jsonify({
         'status': 'healthy',
-        'level': rag_service.learning_level,
-        'doc_loaded': vector_count > 0,
-        'vector_count': vector_count
+        'message': 'API server is running'
     }), 200
 
 
