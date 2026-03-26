@@ -28,6 +28,12 @@ def _normalize_database_url(raw_url: str) -> str:
     return raw_url
 
 app = Flask(__name__)
+
+# Root route for health checks
+@app.route("/")
+def home():
+    return {"status": "Backend is running 🚀"}
+
 CORS(
     app,
     supports_credentials=True,
